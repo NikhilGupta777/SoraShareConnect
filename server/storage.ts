@@ -5,6 +5,7 @@ export interface IStorage {
   getAvailableCodesCount(): Promise<number>;
   getCodesByStatus(status: string): Promise<InviteCode[]>;
   getCodeById(id: string): Promise<InviteCode | undefined>;
+  getCodeByValue(code: string): Promise<InviteCode | undefined>;
   getAllCodes(): Promise<InviteCode[]>;
   getNextAvailableCode(): Promise<InviteCode | undefined>;
   createCode(code: InsertInviteCode): Promise<InviteCode>;
@@ -35,6 +36,10 @@ export class MemStorage implements IStorage {
 
   async getCodeById(id: string): Promise<InviteCode | undefined> {
     return this.codes.get(id);
+  }
+
+  async getCodeByValue(code: string): Promise<InviteCode | undefined> {
+    return Array.from(this.codes.values()).find(c => c.code === code);
   }
 
   async getAllCodes(): Promise<InviteCode[]> {
@@ -70,6 +75,18 @@ export class MemStorage implements IStorage {
   ): Promise<InviteCode | undefined> {
     const code = this.codes.get(id);
     if (!code) return undefined;
+    
+    const validTransitions: Record<string, string[]> = {
+      'available': ['distributed', 'invalid'],
+      'distributed': ['used', 'invalid'],
+      'used': ['invalid'],
+      'invalid': [],
+    };
+
+    const currentStatus = code.status;
+    if (currentStatus !== status && !validTransitions[currentStatus]?.includes(status)) {
+      throw new Error(`Invalid status transition from ${currentStatus} to ${status}`);
+    }
     
     const updatedCode: InviteCode = {
       ...code,

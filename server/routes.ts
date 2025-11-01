@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { insertInviteCodeSchema, insertAdminSchema } from "@shared/schema";
 import bcrypt from "bcrypt";
 import session from "express-session";
+import { z } from "zod";
 
 declare module "express-session" {
   interface SessionData {
@@ -34,12 +35,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  async function verifyRecaptcha(token: string): Promise<boolean> {
+    try {
+      const secretKey = process.env.RECAPTCHA_SECRET_KEY;
+      if (!secretKey) {
+        console.warn("RECAPTCHA_SECRET_KEY not set, skipping verification in development");
+        return true;
+      }
+
+      const response = await fetch('https://www.google.com/recaptcha/api/siteverify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `secret=${encodeURIComponent(secretKey)}&response=${encodeURIComponent(token)}`,
+      });
+
+      const data = await response.json();
+      return data.success === true;
+    } catch (error) {
+      console.error("reCAPTCHA verification error:", error);
+      return false;
+    }
+  }
+
+  const requestCodeSchema = z.object({
+    recaptchaToken: z.string().min(1),
+  });
+
   app.post("/api/codes/request", async (req, res) => {
     try {
-      const { recaptchaToken } = req.body;
-      
-      if (!recaptchaToken) {
+      const validation = requestCodeSchema.safeParse(req.body);
+      if (!validation.success) {
         return res.status(400).json({ error: "reCAPTCHA verification required" });
+      }
+
+      const { recaptchaToken } = validation.data;
+
+      const isHuman = await verifyRecaptcha(recaptchaToken);
+      if (!isHuman) {
+        return res.status(400).json({ error: "reCAPTCHA verification failed. Please try again." });
       }
 
       const code = await storage.getNextAvailableCode();
@@ -55,22 +90,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  const submitCodesSchema = z.object({
+    codes: z.array(z.string().min(1)).length(4),
+    distributedCodeId: z.string().optional(),
+  });
+
   app.post("/api/codes/submit", async (req, res) => {
     try {
-      const { codes, distributedCodeId } = req.body;
-      
-      if (!Array.isArray(codes) || codes.length !== 4) {
-        return res.status(400).json({ error: "Exactly 4 codes are required" });
+      const validation = submitCodesSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({ error: "Exactly 4 valid codes are required" });
+      }
+
+      const { codes, distributedCodeId } = validation.data;
+
+      const trimmedCodes = codes.map(c => c.trim());
+      const uniqueCodes = new Set(trimmedCodes);
+      if (uniqueCodes.size !== trimmedCodes.length) {
+        return res.status(400).json({ error: "Duplicate codes are not allowed" });
+      }
+
+      for (const codeText of trimmedCodes) {
+        const existing = await storage.getCodeByValue(codeText);
+        if (existing) {
+          return res.status(400).json({ error: `Code ${codeText} already exists in the system` });
+        }
       }
 
       const createdCodes = [];
-      for (const codeText of codes) {
-        if (!codeText || codeText.trim() === '') {
-          return res.status(400).json({ error: "All code fields must be filled" });
-        }
-        
+      for (const codeText of trimmedCodes) {
         const newCode = await storage.createCode({
-          code: codeText.trim(),
+          code: codeText,
           status: 'available',
         });
         createdCodes.push(newCode);
@@ -86,9 +136,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  const loginSchema = z.object({
+    username: z.string().min(1),
+    password: z.string().min(1),
+  });
+
   app.post("/api/admin/login", async (req, res) => {
     try {
-      const { username, password } = req.body;
+      const validation = loginSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({ error: "Username and password are required" });
+      }
+
+      const { username, password } = validation.data;
       
       const admin = await storage.getAdminByUsername(username);
       if (!admin) {
@@ -133,23 +193,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  const addCodesSchema = z.object({
+    codes: z.array(z.string().min(1)),
+  });
+
   app.post("/api/admin/codes", requireAdmin, async (req, res) => {
     try {
-      const { codes } = req.body;
-      
-      if (!Array.isArray(codes) || codes.length === 0) {
-        return res.status(400).json({ error: "At least one code is required" });
+      const validation = addCodesSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({ error: "At least one valid code is required" });
+      }
+
+      const { codes } = validation.data;
+      const trimmedCodes = codes.map(c => c.trim()).filter(c => c !== '');
+
+      if (trimmedCodes.length === 0) {
+        return res.status(400).json({ error: "At least one valid code is required" });
+      }
+
+      for (const codeText of trimmedCodes) {
+        const existing = await storage.getCodeByValue(codeText);
+        if (existing) {
+          return res.status(400).json({ error: `Code ${codeText} already exists in the system` });
+        }
       }
 
       const createdCodes = [];
-      for (const codeText of codes) {
-        if (codeText && codeText.trim() !== '') {
-          const newCode = await storage.createCode({
-            code: codeText.trim(),
-            status: 'available',
-          });
-          createdCodes.push(newCode);
-        }
+      for (const codeText of trimmedCodes) {
+        const newCode = await storage.createCode({
+          code: codeText,
+          status: 'available',
+        });
+        createdCodes.push(newCode);
       }
 
       res.json({ success: true, codes: createdCodes });
@@ -158,19 +233,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  const updateCodeSchema = z.object({
+    status: z.enum(['available', 'distributed', 'used', 'invalid']),
+  });
+
   app.patch("/api/admin/codes/:id", requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
-      const { status } = req.body;
+      const validation = updateCodeSchema.safeParse(req.body);
       
-      const updatedCode = await storage.updateCodeStatus(id, status);
+      if (!validation.success) {
+        return res.status(400).json({ error: "Invalid status value" });
+      }
+
+      const { status } = validation.data;
+      
+      const code = await storage.getCodeById(id);
+      if (!code) {
+        return res.status(404).json({ error: "Code not found" });
+      }
+
+      const dateDistributed = status === 'distributed' && code.status !== 'distributed' 
+        ? new Date() 
+        : undefined;
+      
+      const updatedCode = await storage.updateCodeStatus(id, status, dateDistributed);
       if (!updatedCode) {
         return res.status(404).json({ error: "Code not found" });
       }
 
       res.json(updatedCode);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to update code" });
+    } catch (error: any) {
+      if (error.message && error.message.includes("Invalid status transition")) {
+        res.status(400).json({ error: error.message });
+      } else {
+        res.status(500).json({ error: "Failed to update code" });
+      }
     }
   });
 
