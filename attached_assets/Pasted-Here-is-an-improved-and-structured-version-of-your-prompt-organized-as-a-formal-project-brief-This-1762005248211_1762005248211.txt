@@ -1,0 +1,78 @@
+Here is an improved and structured version of your prompt, organized as a formal project brief. This clarifies the features, user flow, and technical requirements for building your website.
+
+---
+
+### **Project Brief: Sora Invite Code Sharing Community**
+
+#### 1. Project Objective
+To create a web platform that manages and distributes OpenAI Sora invite codes. The platform will operate on a community-driven "pay it forward" model: a user receives one code and is then prompted to contribute the new codes they receive, thus replenishing the system.
+
+#### 2. Core User Flow
+1.  **Request:** A new user visits the site, proves they are human via reCAPTCHA, and requests an invite code.
+2.  **Receive:** The system securely provides the user with one (1) valid, available code from the database.
+3.  **Replenish:** After receiving the code, the user is immediately prompted to submit the new invite codes (e.g., the four codes) they will get from Sora after successfully signing up.
+4.  **Submit:** The user submits the new codes, which are added to the database as `Available`.
+
+#### 3. System Components & Features
+
+**A. Public-Facing Website (User Flow)**
+
+* **Home/Dashboard:**
+    * A simple, clean interface.
+    * Displays the number of currently available codes (e.g., "7 codes available").
+    * A "Request a Code" button.
+* **Verification:**
+    * Clicking the request button must trigger a **reCAPTCHA** challenge to prevent bots.
+* **Code Delivery:**
+    * Upon successful reCAPTCHA verification, the user is shown a new screen:
+        * One (1) invite code is displayed (e.g., `SORA-ABC-123`).
+        * A "Copy Code" button.
+* **"Pay it Forward" Form (Submission):**
+    * After the code is displayed, the same screen (or a subsequent one) will show:
+        * A clear message explaining the "pay it forward" system (e.g., "You will receive 4 new codes after you log in. Please share them here to help the community!").
+        * Four distinct input fields (e.g., "New Code 1", "New Code 2", etc.).
+        * A "Submit New Codes" button.
+* **Thank You Page:**
+    * After submission, the user sees a "Thank you for contributing!" message.
+
+**B. Admin Panel (Backend Management)**
+
+* **Secure Login:** Only accessible to administrators.
+* **Main Dashboard:**
+    * At-a-glance statistics:
+        * Total codes in the database.
+        * Total codes `Available`.
+        * Total codes `Distributed` (given out but not yet used/confirmed).
+        * Total codes `Used/Confirmed`.
+        * Total codes `Invalid`.
+* **Code Management (CRUD):**
+    * **Add Codes:** Ability to manually add one or multiple codes to seed the database (e.g., the first 4 codes).
+    * **View All Codes:** A table listing all codes with the following columns:
+        * `Code` (the invite code itself)
+        * `Status` (see "Code Status Logic" below)
+        * `Date Added`
+        * `Date Distributed`
+    * **Edit/Delete Codes:** Ability to manually edit a code's status or delete it.
+* **Verification Queue:**
+    * A dedicated section showing all codes with the status `Distributed`.
+    * This allows the admin to manually check codes that were given out but for which no new codes were submitted in return. The admin can then manually update their status to `Used` or `Invalid`.
+
+#### 4. Code Status Logic
+To track the lifecycle of a code, it should have a `status` field:
+
+1.  **`Available`**: A valid code, in the database, ready to be given to a user.
+2.  **`Distributed`**: A code that has been given to a user. The system is now waiting for that user to submit their four new codes.
+3.  **`Used`**: A code that is confirmed as used. This status is set **automatically** when the user who received it successfully submits their four new codes.
+4.  **`Invalid`**: A code that an admin has manually marked as expired or non-functional.
+
+#### 5. Proposed Technical Stack
+* **Database:** **Neon (Serverless PostgreSQL)** for managing the codes, statuses, and timestamps.
+* **Cloud Services:** **Amazon Web Services (AWS)**.
+* **File Storage (Optional):** **AWS S3** if any assets or file uploads are needed in the future.
+* **Human Verification:** **Google reCAPTCHA**.
+* **Backend:** (e.g., Node.js, Python, Go) hosted on an AWS service (like App Runner, Fargate, or EC2).
+* **Frontend:** (e.g., React, Next.js, Vue.js) hosted on an AWS service (like S3/CloudFront or Amplify).
+
+---
+
+Would you like me to help you create a database schema for this project based on these requirements?
