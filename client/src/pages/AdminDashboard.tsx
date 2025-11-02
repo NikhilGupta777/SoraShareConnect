@@ -54,6 +54,7 @@ export default function AdminDashboard() {
     exhausted: number; 
     invalid: number;
     totalClaims: number;
+    needsReview: number;
   }>({
     queryKey: ['/api/codes/stats'],
   });
@@ -271,6 +272,25 @@ export default function AdminDashboard() {
             </Card>
           </div>
 
+          {stats && stats.needsReview > 0 && (
+            <Card className="border-2 border-yellow-500/50 bg-yellow-500/5">
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <XCircle className="w-5 h-5 text-yellow-500" />
+                  Codes Needing Review
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground mb-4">
+                  {stats.needsReview} code{stats.needsReview !== 1 ? 's have' : ' has'} been marked as not working 5+ times and need{stats.needsReview === 1 ? 's' : ''} your review.
+                </p>
+                <p className="text-xs text-yellow-600 bg-yellow-500/10 border border-yellow-500/20 rounded p-3">
+                  These codes may be invalid or expired. Please verify and update their status accordingly.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <Card className="lg:col-span-2">
               <CardHeader>
@@ -385,8 +405,8 @@ export default function AdminDashboard() {
                       <TableHead>Code</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Usage</TableHead>
+                      <TableHead>Failed Reports</TableHead>
                       <TableHead>Created</TableHead>
-                      <TableHead>Last Claimed</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -432,11 +452,20 @@ export default function AdminDashboard() {
                               />
                             </div>
                           </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {new Date(code.createdAt).toLocaleDateString()}
+                          <TableCell>
+                            {code.failedValidations > 0 ? (
+                              <div className="flex items-center gap-2">
+                                <Badge variant={code.needsReview ? "destructive" : "secondary"} className="gap-1">
+                                  {code.failedValidations}
+                                  {code.needsReview && <XCircle className="w-3 h-3" />}
+                                </Badge>
+                              </div>
+                            ) : (
+                              <span className="text-sm text-muted-foreground">0</span>
+                            )}
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
-                            {code.lastClaimedAt ? new Date(code.lastClaimedAt).toLocaleString() : '-'}
+                            {new Date(code.createdAt).toLocaleDateString()}
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-2">

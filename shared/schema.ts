@@ -10,6 +10,8 @@ export const inviteCodes = pgTable("invite_codes", {
   status: text("status").notNull().default("available"),
   usageCount: integer("usage_count").notNull().default(0),
   maxUses: integer("max_uses").notNull().default(6),
+  failedValidations: integer("failed_validations").notNull().default(0),
+  needsReview: integer("needs_review").default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   lastClaimedAt: timestamp("last_claimed_at"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -24,6 +26,9 @@ export const codeUsages = pgTable("code_usages", {
   status: text("status").notNull().default("claimed"),
   contributedCodeId: varchar("contributed_code_id").references(() => inviteCodes.id),
   note: text("note"),
+  userMarkedAsUsed: integer("user_marked_as_used").default(0),
+  feedbackStatus: text("feedback_status"),
+  feedbackAt: timestamp("feedback_at"),
 });
 
 export const admins = pgTable("admins", {

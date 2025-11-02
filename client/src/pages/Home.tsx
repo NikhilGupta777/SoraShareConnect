@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Shield, Users, Zap, Info, Sparkles, ArrowRight, TrendingUp } from "lucide-react";
+import { Shield, Users, Zap, Info, Sparkles, ArrowRight, TrendingUp, Heart } from "lucide-react";
 import { Link } from "wouter";
 import { useState, useEffect } from "react";
 
@@ -174,17 +174,28 @@ export default function Home() {
                       </div>
                     </div>
 
-                    <Link href="/request">
-                      <Button 
-                        size="lg" 
-                        className="w-full h-14 text-lg gap-2 shadow-lg shadow-primary/20 hover:shadow-xl hover:shadow-primary/30 transition-all duration-300" 
-                        data-testid="button-request-code"
-                      >
-                        <Zap className="w-5 h-5" />
-                        Request Code Now
-                        <ArrowRight className="w-5 h-5" />
-                      </Button>
-                    </Link>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Link href="/request">
+                        <Button 
+                          size="lg" 
+                          className="w-full h-14 text-base gap-2 shadow-lg shadow-primary/20 hover:shadow-xl hover:shadow-primary/30 transition-all duration-300" 
+                          data-testid="button-request-code"
+                        >
+                          <Zap className="w-5 h-5" />
+                          Request Code
+                        </Button>
+                      </Link>
+                      <Link href="/donate">
+                        <Button 
+                          size="lg" 
+                          variant="outline"
+                          className="w-full h-14 text-base gap-2 border-2 hover:bg-green-500/10 hover:border-green-500/50 transition-all duration-300" 
+                        >
+                          <Heart className="w-5 h-5 text-green-500" />
+                          Donate Code
+                        </Button>
+                      </Link>
+                    </div>
                   </div>
                 </CardContent>
               </Card>

@@ -147,6 +147,75 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  const feedbackSchema = z.object({
+    usageId: z.string(),
+    working: z.boolean(),
+  });
+
+  app.post("/api/codes/feedback", async (req, res) => {
+    try {
+      const validation = feedbackSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({ error: "Invalid feedback data" });
+      }
+
+      const { usageId, working } = validation.data;
+      const result = await storage.submitCodeFeedback(usageId, working);
+
+      if (result.success && result.newCode && result.newUsage) {
+        res.json({ 
+          success: true, 
+          message: working ? "Thanks for the feedback!" : "We've given you a new code!",
+          replaced: !working,
+          newCode: {
+            code: result.newCode.code,
+            codeId: result.newCode.id,
+            usageId: result.newUsage.id,
+            remainingUses: result.newCode.maxUses - result.newCode.usageCount,
+          }
+        });
+      } else if (result.success) {
+        res.json({ 
+          success: true, 
+          message: "Thanks for the feedback!",
+          replaced: false,
+        });
+      } else {
+        res.status(404).json({ 
+          error: "Sorry, no replacement codes available right now." 
+        });
+      }
+    } catch (error) {
+      console.error("Error submitting feedback:", error);
+      res.status(500).json({ error: "Failed to submit feedback" });
+    }
+  });
+
+  const markUsedSchema = z.object({
+    usageId: z.string(),
+  });
+
+  app.post("/api/codes/mark-used", async (req, res) => {
+    try {
+      const validation = markUsedSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({ error: "Invalid request data" });
+      }
+
+      const { usageId } = validation.data;
+      const usage = await storage.markCodeAsUsedByUser(usageId);
+
+      if (!usage) {
+        return res.status(404).json({ error: "Usage not found" });
+      }
+
+      res.json({ success: true, message: "Marked as used!" });
+    } catch (error) {
+      console.error("Error marking code as used:", error);
+      res.status(500).json({ error: "Failed to mark code as used" });
+    }
+  });
+
   const loginSchema = z.object({
     username: z.string().min(1),
     password: z.string().min(1),

@@ -3,8 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { CheckCircle, Copy, ArrowLeft, Sparkles, Heart, PartyPopper, Gift } from "lucide-react";
+import { CheckCircle, Copy, ArrowLeft, Sparkles, Heart, PartyPopper, Gift, ThumbsUp, ThumbsDown, Check, X } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -15,9 +16,12 @@ export default function RequestCode() {
   const [step, setStep] = useState<'request' | 'received' | 'contribute' | 'thankyou'>('request');
   const [receivedCode, setReceivedCode] = useState<string>('');
   const [remainingUses, setRemainingUses] = useState<number>(6);
+  const [usageId, setUsageId] = useState<string>('');
   const [newCode, setNewCode] = useState('');
   const [copied, setCopied] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
+  const [markedAsUsed, setMarkedAsUsed] = useState(false);
+  const [feedbackGiven, setFeedbackGiven] = useState(false);
 
   const requestCodeMutation = useMutation({
     mutationFn: async () => {
@@ -27,7 +31,10 @@ export default function RequestCode() {
     onSuccess: (data: any) => {
       setReceivedCode(data.code);
       setRemainingUses(data.remainingUses || 6);
+      setUsageId(data.usageId);
       setStep('received');
+      setFeedbackGiven(false);
+      setMarkedAsUsed(false);
     },
     onError: (error: any) => {
       toast({
@@ -54,6 +61,65 @@ export default function RequestCode() {
       toast({
         title: "Error",
         description: error.message || "Failed to submit code. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const feedbackMutation = useMutation({
+    mutationFn: async (working: boolean) => {
+      const res = await apiRequest('POST', '/api/codes/feedback', {
+        usageId,
+        working,
+      });
+      return await res.json();
+    },
+    onSuccess: (data: any) => {
+      setFeedbackGiven(true);
+      if (data.replaced && data.newCode) {
+        setReceivedCode(data.newCode.code);
+        setUsageId(data.newCode.usageId);
+        setRemainingUses(data.newCode.remainingUses);
+        setMarkedAsUsed(false);
+        setFeedbackGiven(false);
+        toast({
+          title: "Code Replaced!",
+          description: "We've given you a new working code.",
+        });
+      } else {
+        toast({
+          title: "Thanks for the feedback!",
+          description: data.message || "Your feedback helps improve the community.",
+        });
+      }
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to submit feedback.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const markUsedMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest('POST', '/api/codes/mark-used', {
+        usageId,
+      });
+      return await res.json();
+    },
+    onSuccess: () => {
+      setMarkedAsUsed(true);
+      toast({
+        title: "Marked as used!",
+        description: "Thanks for letting us know!",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to mark as used.",
         variant: "destructive",
       });
     },
@@ -226,8 +292,71 @@ export default function RequestCode() {
                   </div>
                 </div>
 
-                <CardContent className="pt-6 pb-8">
-                  <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 mb-6">
+                <CardContent className="pt-6 pb-8 space-y-6">
+                  <div className="border rounded-lg p-4 space-y-3">
+                    <Label className="text-sm font-semibold">Did you use this code?</Label>
+                    <Select 
+                      value={markedAsUsed ? "yes" : "no"} 
+                      onValueChange={(val) => {
+                        if (val === "yes" && !markedAsUsed) {
+                          markUsedMutation.mutate();
+                        }
+                      }}
+                      disabled={markedAsUsed}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="no">Not yet</SelectItem>
+                        <SelectItem value="yes">Yes, I used it!</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {markedAsUsed && (
+                      <p className="text-xs text-green-600 flex items-center gap-2">
+                        <Check className="w-4 h-4" />
+                        Thanks for letting us know!
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="border rounded-lg p-4 space-y-3">
+                    <Label className="text-sm font-semibold">Did the code work?</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Help us maintain quality codes by providing feedback
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={() => feedbackMutation.mutate(true)}
+                        disabled={feedbackGiven || feedbackMutation.isPending}
+                        className="gap-2 border-green-500/50 hover:bg-green-500/10"
+                      >
+                        <ThumbsUp className="w-4 h-4 text-green-500" />
+                        Working
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => feedbackMutation.mutate(false)}
+                        disabled={feedbackGiven || feedbackMutation.isPending}
+                        className="gap-2 border-red-500/50 hover:bg-red-500/10"
+                      >
+                        <ThumbsDown className="w-4 h-4 text-red-500" />
+                        Not Working
+                      </Button>
+                    </div>
+                    {feedbackGiven && (
+                      <p className="text-xs text-primary flex items-center gap-2">
+                        <Sparkles className="w-4 h-4" />
+                        Thank you for your feedback!
+                      </p>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      If the code doesn't work, we'll automatically give you a new one!
+                    </p>
+                  </div>
+
+                  <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
                     <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
                       <Sparkles className="w-4 h-4 text-blue-500" />
                       Next Steps:

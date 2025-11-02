@@ -22,9 +22,13 @@ export interface IStorage {
     exhausted: number; 
     invalid: number;
     totalClaims: number;
+    needsReview: number;
   }>;
   getCodeUsages(codeId: string): Promise<CodeUsage[]>;
+  getUsageById(usageId: string): Promise<CodeUsage | undefined>;
   contributeCode(code: string, claimerIpHash: string): Promise<InviteCode>;
+  submitCodeFeedback(usageId: string, working: boolean): Promise<{ success: boolean; newCode?: InviteCode; newUsage?: CodeUsage }>;
+  markCodeAsUsedByUser(usageId: string): Promise<CodeUsage | undefined>;
   
   getAdminByUsername(username: string): Promise<Admin | undefined>;
   createAdmin(admin: InsertAdmin): Promise<Admin>;
@@ -182,6 +186,7 @@ export class DatabaseStorage implements IStorage {
     exhausted: number; 
     invalid: number;
     totalClaims: number;
+    needsReview: number;
   }> {
     const codes = await db.select().from(inviteCodes);
     const [claimsResult] = await db.select({ count: count() }).from(codeUsages);
@@ -193,6 +198,7 @@ export class DatabaseStorage implements IStorage {
       exhausted: codes.filter(c => c.status === 'exhausted').length,
       invalid: codes.filter(c => c.status === 'invalid').length,
       totalClaims: claimsResult?.count || 0,
+      needsReview: codes.filter(c => c.needsReview === 1).length,
     };
   }
 
@@ -202,6 +208,114 @@ export class DatabaseStorage implements IStorage {
       .from(codeUsages)
       .where(eq(codeUsages.inviteCodeId, codeId))
       .orderBy(desc(codeUsages.claimedAt));
+  }
+
+  async getUsageById(usageId: string): Promise<CodeUsage | undefined> {
+    const [usage] = await db
+      .select()
+      .from(codeUsages)
+      .where(eq(codeUsages.id, usageId));
+    return usage;
+  }
+
+  async submitCodeFeedback(usageId: string, working: boolean): Promise<{ success: boolean; newCode?: InviteCode; newUsage?: CodeUsage }> {
+    return await db.transaction(async (tx) => {
+      const [usage] = await tx
+        .select()
+        .from(codeUsages)
+        .where(eq(codeUsages.id, usageId));
+
+      if (!usage) {
+        throw new Error('Usage not found');
+      }
+
+      await tx
+        .update(codeUsages)
+        .set({
+          feedbackStatus: working ? 'working' : 'not_working',
+          feedbackAt: new Date(),
+        })
+        .where(eq(codeUsages.id, usageId));
+
+      if (working) {
+        return { success: true };
+      }
+
+      const [inviteCode] = await tx
+        .select()
+        .from(inviteCodes)
+        .where(eq(inviteCodes.id, usage.inviteCodeId));
+
+      if (!inviteCode) {
+        throw new Error('Code not found');
+      }
+
+      const newFailedCount = inviteCode.failedValidations + 1;
+
+      await tx
+        .update(inviteCodes)
+        .set({
+          failedValidations: newFailedCount,
+          needsReview: newFailedCount >= 5 ? 1 : 0,
+          updatedAt: new Date(),
+        })
+        .where(eq(inviteCodes.id, inviteCode.id));
+
+      const [replacementCode] = await tx
+        .select()
+        .from(inviteCodes)
+        .where(
+          and(
+            eq(inviteCodes.status, 'available'),
+            sql`${inviteCodes.usageCount} < ${inviteCodes.maxUses}`,
+            sql`${inviteCodes.id} != ${inviteCode.id}`
+          )
+        )
+        .orderBy(inviteCodes.createdAt)
+        .limit(1);
+
+      if (!replacementCode) {
+        return { success: false };
+      }
+
+      const newUsageCount = replacementCode.usageCount + 1;
+      const newStatus = newUsageCount >= replacementCode.maxUses ? 'exhausted' : 
+                       newUsageCount > 0 ? 'active' : 'available';
+
+      const [updatedCode] = await tx
+        .update(inviteCodes)
+        .set({
+          usageCount: newUsageCount,
+          status: newStatus,
+          lastClaimedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(inviteCodes.id, replacementCode.id))
+        .returning();
+
+      const [newUsage] = await tx
+        .insert(codeUsages)
+        .values({
+          inviteCodeId: replacementCode.id,
+          ipHash: usage.ipHash,
+          userAgent: usage.userAgent,
+          status: 'claimed',
+        })
+        .returning();
+
+      return { success: true, newCode: updatedCode, newUsage };
+    });
+  }
+
+  async markCodeAsUsedByUser(usageId: string): Promise<CodeUsage | undefined> {
+    const [usage] = await db
+      .update(codeUsages)
+      .set({
+        userMarkedAsUsed: 1,
+      })
+      .where(eq(codeUsages.id, usageId))
+      .returning();
+    return usage;
   }
 
   async contributeCode(code: string, claimerIpHash: string): Promise<InviteCode> {
