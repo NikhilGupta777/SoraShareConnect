@@ -4,74 +4,62 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { CheckCircle, Copy, ArrowLeft } from "lucide-react";
+import { CheckCircle, Copy, ArrowLeft, Sparkles, Heart, PartyPopper, Gift } from "lucide-react";
 import { Link, useLocation } from "wouter";
-import ReCAPTCHA from "react-google-recaptcha";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 
 export default function RequestCode() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const [step, setStep] = useState<'verify' | 'received' | 'contribute' | 'thankyou'>('verify');
-  const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null);
+  const [step, setStep] = useState<'request' | 'received' | 'contribute' | 'thankyou'>('request');
   const [receivedCode, setReceivedCode] = useState<string>('');
-  const [codeId, setCodeId] = useState<string>('');
-  const [newCodes, setNewCodes] = useState(['', '', '', '']);
+  const [remainingUses, setRemainingUses] = useState<number>(6);
+  const [newCode, setNewCode] = useState('');
   const [copied, setCopied] = useState(false);
+  const [showConfetti, setShowConfetti] = useState(false);
 
   const requestCodeMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest('POST', '/api/codes/request', { recaptchaToken });
+      const res = await apiRequest('POST', '/api/codes/request', {});
       return await res.json();
     },
     onSuccess: (data: any) => {
       setReceivedCode(data.code);
-      setCodeId(data.codeId);
+      setRemainingUses(data.remainingUses || 6);
       setStep('received');
     },
     onError: (error: any) => {
       toast({
         title: "Error",
-        description: error.message || "Failed to request code. Please try again.",
+        description: error.message || "Failed to request code. Please try again later.",
         variant: "destructive",
       });
     },
   });
 
-  const submitCodesMutation = useMutation({
+  const submitCodeMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest('POST', '/api/codes/submit', {
-        codes: newCodes,
-        distributedCodeId: codeId,
+      const res = await apiRequest('POST', '/api/codes/contribute', {
+        code: newCode,
       });
       return await res.json();
     },
     onSuccess: () => {
+      setShowConfetti(true);
       setStep('thankyou');
+      setTimeout(() => setShowConfetti(false), 5000);
     },
     onError: (error: any) => {
       toast({
         title: "Error",
-        description: error.message || "Failed to submit codes. Please try again.",
+        description: error.message || "Failed to submit code. Please try again.",
         variant: "destructive",
       });
     },
   });
 
-  const handleRecaptchaChange = (token: string | null) => {
-    setRecaptchaToken(token);
-  };
-
   const handleRequestCode = () => {
-    if (!recaptchaToken) {
-      toast({
-        title: "Verification Required",
-        description: "Please complete the reCAPTCHA verification.",
-        variant: "destructive",
-      });
-      return;
-    }
     requestCodeMutation.mutate();
   };
 
@@ -93,25 +81,44 @@ export default function RequestCode() {
     }
   };
 
-  const handleSubmitCodes = () => {
-    if (newCodes.some(code => !code.trim())) {
+  const handleSubmitCode = () => {
+    if (!newCode.trim()) {
       toast({
-        title: "Missing Codes",
-        description: "Please fill in all 4 code fields.",
+        title: "Missing Code",
+        description: "Please enter your invite code.",
         variant: "destructive",
       });
       return;
     }
-    submitCodesMutation.mutate();
+    submitCodeMutation.mutate();
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b">
+    <div className="min-h-screen bg-gradient-to-b from-background via-background to-muted/20">
+      {showConfetti && (
+        <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
+          {[...Array(50)].map((_, i) => (
+            <div
+              key={i}
+              className="absolute animate-confetti"
+              style={{
+                left: `${Math.random() * 100}%`,
+                top: `-10%`,
+                animationDelay: `${Math.random() * 3}s`,
+                animationDuration: `${3 + Math.random() * 2}s`,
+              }}
+            >
+              <Sparkles className="w-4 h-4 text-primary" />
+            </div>
+          ))}
+        </div>
+      )}
+
+      <header className="border-b backdrop-blur-sm bg-background/80 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center">
           <Link href="/">
-            <Button variant="ghost" size="sm" data-testid="button-back-home">
-              <ArrowLeft className="w-4 h-4 mr-2" />
+            <Button variant="ghost" size="sm" data-testid="button-back-home" className="gap-2">
+              <ArrowLeft className="w-4 h-4" />
               Back to Home
             </Button>
           </Link>
@@ -120,149 +127,243 @@ export default function RequestCode() {
 
       <main className="py-16">
         <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8">
-          {step === 'verify' && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Verify You're Human</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <p className="text-sm text-muted-foreground">
-                  Complete the verification below to receive your Sora invite code.
-                </p>
-                <div className="flex justify-center">
-                  <ReCAPTCHA
-                    sitekey={import.meta.env.VITE_RECAPTCHA_SITE_KEY || "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI"}
-                    onChange={handleRecaptchaChange}
-                  />
+          {step === 'request' && (
+            <Card className="border-2 border-primary/20 shadow-2xl">
+              <CardHeader className="text-center pb-8">
+                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mx-auto mb-4">
+                  <Gift className="w-10 h-10 text-primary" />
                 </div>
+                <CardTitle className="text-3xl">Get Your Invite Code</CardTitle>
+                <p className="text-muted-foreground mt-2">
+                  Click the button below to receive your free Sora invite code instantly
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-6 pb-10">
+                <div className="bg-primary/5 border border-primary/10 rounded-lg p-6 space-y-3">
+                  <h4 className="font-semibold flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-primary" />
+                    What you'll get:
+                  </h4>
+                  <ul className="space-y-2 text-sm text-muted-foreground">
+                    <li className="flex items-start gap-2">
+                      <CheckCircle className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
+                      <span>One valid Sora invite code</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <CheckCircle className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
+                      <span>This code can invite 6 people total</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <CheckCircle className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
+                      <span>After you use it, you'll receive a new code to share</span>
+                    </li>
+                  </ul>
+                </div>
+
                 <Button 
                   onClick={handleRequestCode} 
-                  disabled={!recaptchaToken || requestCodeMutation.isPending}
-                  className="w-full"
+                  disabled={requestCodeMutation.isPending}
+                  className="w-full h-14 text-lg gap-2 shadow-lg shadow-primary/20 hover:shadow-xl hover:shadow-primary/30 transition-all duration-300"
                   data-testid="button-verify-request"
                 >
-                  {requestCodeMutation.isPending ? "Requesting..." : "Request Code"}
+                  {requestCodeMutation.isPending ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Getting your code...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-5 h-5" />
+                      Request Code Now
+                    </>
+                  )}
                 </Button>
+
+                <p className="text-xs text-center text-muted-foreground">
+                  No verification needed • Instant delivery • Completely free
+                </p>
               </CardContent>
             </Card>
           )}
 
           {step === 'received' && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <CheckCircle className="w-6 h-6 text-primary" />
-                  Your Invite Code
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="border-2 border-primary rounded-lg p-8 text-center space-y-4">
-                  <p className="text-2xl font-mono font-bold tracking-wider" data-testid="text-received-code">
-                    {receivedCode}
-                  </p>
-                  <Button 
-                    onClick={handleCopyCode}
-                    variant="outline"
-                    data-testid="button-copy-code"
-                  >
-                    {copied ? (
-                      <>
-                        <CheckCircle className="w-4 h-4 mr-2" />
-                        Copied!
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-4 h-4 mr-2" />
-                        Copy Code
-                      </>
-                    )}
-                  </Button>
+            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <Card className="border-2 border-primary/20 shadow-2xl overflow-hidden">
+                <div className="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-8">
+                  <div className="text-center mb-6">
+                    <div className="w-16 h-16 rounded-full bg-primary/20 flex items-center justify-center mx-auto mb-4 animate-bounce">
+                      <CheckCircle className="w-8 h-8 text-primary" />
+                    </div>
+                    <h3 className="text-2xl font-bold mb-2">Success! Here's Your Code</h3>
+                    <p className="text-sm text-muted-foreground">
+                      This code can be used {remainingUses} more times
+                    </p>
+                  </div>
+
+                  <div className="bg-background border-2 border-primary rounded-xl p-6 space-y-4">
+                    <p className="text-3xl sm:text-4xl font-mono font-bold tracking-wider text-center break-all" data-testid="text-received-code">
+                      {receivedCode}
+                    </p>
+                    <Button 
+                      onClick={handleCopyCode}
+                      variant="outline"
+                      size="lg"
+                      className="w-full gap-2"
+                      data-testid="button-copy-code"
+                    >
+                      {copied ? (
+                        <>
+                          <CheckCircle className="w-5 h-5 text-green-500" />
+                          Copied!
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-5 h-5" />
+                          Copy Code
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </div>
 
-                <div className="border-t pt-6">
-                  <h3 className="font-semibold mb-2">Next Step: Pay It Forward</h3>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    After you use this code, you'll receive 4 new invite codes from Sora. 
-                    Please share them below to help the community!
-                  </p>
+                <CardContent className="pt-6 pb-8">
+                  <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 mb-6">
+                    <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-blue-500" />
+                      Next Steps:
+                    </h4>
+                    <ol className="text-sm space-y-1 text-muted-foreground list-decimal list-inside">
+                      <li>Connect to a VPN</li>
+                      <li>Go to sora.com and sign up</li>
+                      <li>Use this code to activate your account</li>
+                      <li>After activation, find your invite code in Settings → Invite Friends</li>
+                      <li>Come back and contribute your new code!</li>
+                    </ol>
+                  </div>
+
                   <Button 
                     onClick={() => setStep('contribute')}
-                    className="w-full"
+                    className="w-full h-12 gap-2"
                     data-testid="button-proceed-contribute"
                   >
-                    Continue to Contribute
+                    <Heart className="w-5 h-5" />
+                    Ready to Contribute Back
                   </Button>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </div>
           )}
 
           {step === 'contribute' && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Share Your New Codes</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <p className="text-sm text-muted-foreground">
-                  After signing up with Sora, you'll receive 4 new invite codes. 
-                  Enter them below to help others in the community.
-                </p>
-                <div className="space-y-4">
-                  {newCodes.map((code, index) => (
-                    <div key={index}>
-                      <Label htmlFor={`code-${index}`}>Code {index + 1}</Label>
-                      <Input
-                        id={`code-${index}`}
-                        placeholder="SORA-XXX-XXX"
-                        value={code}
-                        onChange={(e) => {
-                          const updated = [...newCodes];
-                          updated[index] = e.target.value;
-                          setNewCodes(updated);
-                        }}
-                        className="font-mono"
-                        data-testid={`input-code-${index + 1}`}
-                      />
-                    </div>
-                  ))}
-                </div>
-                <Button 
-                  onClick={handleSubmitCodes}
-                  disabled={submitCodesMutation.isPending}
-                  className="w-full"
-                  data-testid="button-submit-codes"
-                >
-                  {submitCodesMutation.isPending ? "Submitting..." : "Submit New Codes"}
-                </Button>
-                <Button 
-                  onClick={() => setLocation('/')}
-                  variant="ghost"
-                  className="w-full"
-                  data-testid="button-skip"
-                >
-                  Skip for Now
-                </Button>
-              </CardContent>
-            </Card>
+            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <Card className="border-2 border-primary/20 shadow-2xl">
+                <CardHeader className="text-center">
+                  <div className="w-16 h-16 rounded-full bg-gradient-to-br from-green-500/20 to-green-500/5 flex items-center justify-center mx-auto mb-4">
+                    <Heart className="w-8 h-8 text-green-500" />
+                  </div>
+                  <CardTitle className="text-2xl">Contribute Your Code</CardTitle>
+                  <p className="text-muted-foreground mt-2">
+                    Share your new invite code to help 6 more people access Sora
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-6 pb-10">
+                  <div className="bg-green-500/5 border border-green-500/10 rounded-lg p-4">
+                    <p className="text-sm">
+                      <span className="font-semibold">Important:</span> After using the code we gave you, 
+                      Sora will generate ONE new invite code for you. This single code can be used by 6 different people.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="new-code" className="text-base">Your New Invite Code</Label>
+                    <Input
+                      id="new-code"
+                      placeholder="Enter your new code (e.g., SORA-XXX-XXX)"
+                      value={newCode}
+                      onChange={(e) => setNewCode(e.target.value)}
+                      className="font-mono text-lg h-14"
+                      data-testid="input-code-1"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Find this in Sora: Settings → Invite Friends
+                    </p>
+                  </div>
+
+                  <Button 
+                    onClick={handleSubmitCode}
+                    disabled={submitCodeMutation.isPending}
+                    className="w-full h-14 text-lg gap-2 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
+                    data-testid="button-submit-codes"
+                  >
+                    {submitCodeMutation.isPending ? (
+                      <>
+                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Submitting...
+                      </>
+                    ) : (
+                      <>
+                        <Gift className="w-5 h-5" />
+                        Submit Code & Help 6 People
+                      </>
+                    )}
+                  </Button>
+
+                  <Button 
+                    onClick={() => setLocation('/')}
+                    variant="ghost"
+                    className="w-full"
+                    data-testid="button-skip"
+                  >
+                    I'll contribute later
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
           )}
 
           {step === 'thankyou' && (
-            <Card>
-              <CardContent className="py-16 text-center space-y-6">
-                <CheckCircle className="w-16 h-16 text-primary mx-auto" />
-                <div>
-                  <h2 className="text-2xl font-semibold mb-2">Thank You!</h2>
-                  <p className="text-muted-foreground">
-                    Your contribution helps keep the community thriving.
-                  </p>
+            <div className="animate-in fade-in zoom-in duration-700">
+              <Card className="border-2 border-green-500/30 shadow-2xl overflow-hidden">
+                <div className="bg-gradient-to-br from-green-500/10 via-emerald-500/5 to-transparent">
+                  <CardContent className="py-20 text-center space-y-8">
+                    <div className="relative">
+                      <div className="w-24 h-24 rounded-full bg-gradient-to-br from-green-500/20 to-emerald-500/10 flex items-center justify-center mx-auto animate-bounce">
+                        <PartyPopper className="w-12 h-12 text-green-500" />
+                      </div>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="w-32 h-32 rounded-full bg-green-500/20 animate-ping" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <h2 className="text-4xl font-bold mb-4 bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
+                        You're Amazing!
+                      </h2>
+                      <p className="text-xl text-muted-foreground max-w-md mx-auto leading-relaxed">
+                        Your contribution will help <span className="font-bold text-primary">6 more people</span> get access to Sora.
+                      </p>
+                    </div>
+
+                    <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-6 max-w-md mx-auto">
+                      <p className="text-sm font-semibold mb-2 flex items-center justify-center gap-2">
+                        <Heart className="w-4 h-4 text-red-500" />
+                        Thank you for keeping the community alive!
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Every code shared makes Sora more accessible to everyone
+                      </p>
+                    </div>
+
+                    <Link href="/">
+                      <Button size="lg" className="gap-2" data-testid="button-return-home">
+                        <Sparkles className="w-5 h-5" />
+                        Return to Home
+                      </Button>
+                    </Link>
+                  </CardContent>
                 </div>
-                <Link href="/">
-                  <Button data-testid="button-return-home">
-                    Return to Home
-                  </Button>
-                </Link>
-              </CardContent>
-            </Card>
+              </Card>
+            </div>
           )}
         </div>
       </main>

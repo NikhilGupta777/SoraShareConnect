@@ -5,12 +5,29 @@ import { insertInviteCodeSchema, insertAdminSchema } from "@shared/schema";
 import bcrypt from "bcrypt";
 import session from "express-session";
 import { z } from "zod";
+import rateLimit from "express-rate-limit";
 
 declare module "express-session" {
   interface SessionData {
     adminId?: string;
   }
 }
+
+const requestLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 3,
+  message: "Too many code requests from this IP, please try again later",
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const contributeLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  message: "Too many code contributions from this IP, please try again later",
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 export async function registerRoutes(app: Express): Promise<Server> {
   app.use(
@@ -35,104 +52,98 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  async function verifyRecaptcha(token: string): Promise<boolean> {
+  app.get("/api/codes/check/:code", async (req, res) => {
     try {
-      const secretKey = process.env.RECAPTCHA_SECRET_KEY;
-      if (!secretKey) {
-        console.warn("RECAPTCHA_SECRET_KEY not set, skipping verification in development");
-        return true;
+      const { code } = req.params;
+      const inviteCode = await storage.getCodeByValue(code);
+      
+      if (!inviteCode) {
+        return res.status(404).json({ error: "Code not found" });
       }
 
-      const response = await fetch('https://www.google.com/recaptcha/api/siteverify', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: `secret=${encodeURIComponent(secretKey)}&response=${encodeURIComponent(token)}`,
+      const usages = await storage.getCodeUsages(inviteCode.id);
+      
+      res.json({
+        code: inviteCode.code,
+        status: inviteCode.status,
+        usageCount: inviteCode.usageCount,
+        maxUses: inviteCode.maxUses,
+        remainingUses: inviteCode.maxUses - inviteCode.usageCount,
+        usages: usages.length,
       });
-
-      const data = await response.json();
-      return data.success === true;
     } catch (error) {
-      console.error("reCAPTCHA verification error:", error);
-      return false;
+      res.status(500).json({ error: "Failed to check code" });
     }
-  }
-
-  const requestCodeSchema = z.object({
-    recaptchaToken: z.string().min(1),
   });
 
-  app.post("/api/codes/request", async (req, res) => {
+  app.post("/api/codes/request", requestLimiter, async (req, res) => {
     try {
-      const validation = requestCodeSchema.safeParse(req.body);
-      if (!validation.success) {
-        return res.status(400).json({ error: "reCAPTCHA verification required" });
-      }
+      const ipAddress = req.ip || req.socket.remoteAddress || 'unknown';
+      const userAgent = req.headers['user-agent'] || 'unknown';
 
-      const { recaptchaToken } = validation.data;
-
-      const isHuman = await verifyRecaptcha(recaptchaToken);
-      if (!isHuman) {
-        return res.status(400).json({ error: "reCAPTCHA verification failed. Please try again." });
-      }
-
-      const code = await storage.getNextAvailableCode();
-      if (!code) {
-        return res.status(404).json({ error: "No codes available at this time. Please check back later." });
-      }
-
-      await storage.updateCodeStatus(code.id, 'distributed', new Date());
+      const result = await storage.claimCode(ipAddress, userAgent);
       
-      res.json({ code: code.code, codeId: code.id });
+      if (!result) {
+        return res.status(404).json({ 
+          error: "No codes available at this time. Please check back later." 
+        });
+      }
+
+      const { code, usage } = result;
+      
+      res.json({ 
+        code: code.code, 
+        codeId: code.id,
+        usageId: usage.id,
+        remainingUses: code.maxUses - code.usageCount,
+        status: code.status,
+      });
     } catch (error) {
+      console.error("Error requesting code:", error);
       res.status(500).json({ error: "Failed to request code" });
     }
   });
 
-  const submitCodesSchema = z.object({
-    codes: z.array(z.string().min(1)).length(4),
-    distributedCodeId: z.string().optional(),
+  const submitCodeSchema = z.object({
+    code: z.string().min(1, "Code is required"),
   });
 
-  app.post("/api/codes/submit", async (req, res) => {
+  app.post("/api/codes/contribute", contributeLimiter, async (req, res) => {
     try {
-      const validation = submitCodesSchema.safeParse(req.body);
+      const validation = submitCodeSchema.safeParse(req.body);
       if (!validation.success) {
-        return res.status(400).json({ error: "Exactly 4 valid codes are required" });
-      }
-
-      const { codes, distributedCodeId } = validation.data;
-
-      const trimmedCodes = codes.map(c => c.trim());
-      const uniqueCodes = new Set(trimmedCodes);
-      if (uniqueCodes.size !== trimmedCodes.length) {
-        return res.status(400).json({ error: "Duplicate codes are not allowed" });
-      }
-
-      for (const codeText of trimmedCodes) {
-        const existing = await storage.getCodeByValue(codeText);
-        if (existing) {
-          return res.status(400).json({ error: `Code ${codeText} already exists in the system` });
-        }
-      }
-
-      const createdCodes = [];
-      for (const codeText of trimmedCodes) {
-        const newCode = await storage.createCode({
-          code: codeText,
-          status: 'available',
+        return res.status(400).json({ 
+          error: validation.error.errors[0]?.message || "Invalid code" 
         });
-        createdCodes.push(newCode);
       }
 
-      if (distributedCodeId) {
-        await storage.updateCodeStatus(distributedCodeId, 'used');
+      const { code } = validation.data;
+      const trimmedCode = code.trim();
+
+      if (!trimmedCode) {
+        return res.status(400).json({ error: "Code cannot be empty" });
       }
 
-      res.json({ success: true, message: "Thank you for contributing!" });
-    } catch (error) {
-      res.status(500).json({ error: "Failed to submit codes" });
+      const ipAddress = req.ip || req.socket.remoteAddress || 'unknown';
+      const ipHash = require('crypto').createHash('sha256')
+        .update(ipAddress + (process.env.SESSION_SECRET || ''))
+        .digest('hex');
+
+      const newCode = await storage.contributeCode(trimmedCode, ipHash);
+
+      res.json({ 
+        success: true, 
+        message: "Thank you for contributing!",
+        code: newCode,
+      });
+    } catch (error: any) {
+      if (error.message === 'Code already exists') {
+        return res.status(400).json({ 
+          error: "This code already exists in the system" 
+        });
+      }
+      console.error("Error contributing code:", error);
+      res.status(500).json({ error: "Failed to submit code" });
     }
   });
 
@@ -193,6 +204,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/admin/codes/:id/usages", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const usages = await storage.getCodeUsages(id);
+      res.json(usages);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch code usages" });
+    }
+  });
+
   const addCodesSchema = z.object({
     codes: z.array(z.string().min(1)),
   });
@@ -214,18 +235,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const codeText of trimmedCodes) {
         const existing = await storage.getCodeByValue(codeText);
         if (existing) {
-          return res.status(400).json({ error: `Code ${codeText} already exists in the system` });
+          return res.status(400).json({ 
+            error: `Code ${codeText} already exists in the system` 
+          });
         }
       }
 
-      const createdCodes = [];
-      for (const codeText of trimmedCodes) {
-        const newCode = await storage.createCode({
-          code: codeText,
-          status: 'available',
-        });
-        createdCodes.push(newCode);
-      }
+      const createdCodes = await storage.createCodes(
+        trimmedCodes.map(code => ({
+          code,
+          status: 'available' as const,
+        }))
+      );
 
       res.json({ success: true, codes: createdCodes });
     } catch (error) {
@@ -234,7 +255,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   const updateCodeSchema = z.object({
-    status: z.enum(['available', 'distributed', 'used', 'invalid']),
+    status: z.enum(['available', 'active', 'exhausted', 'invalid']),
   });
 
   app.patch("/api/admin/codes/:id", requireAdmin, async (req, res) => {
@@ -253,22 +274,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Code not found" });
       }
 
-      const dateDistributed = status === 'distributed' && code.status !== 'distributed' 
-        ? new Date() 
-        : undefined;
-      
-      const updatedCode = await storage.updateCodeStatus(id, status, dateDistributed);
+      const updatedCode = await storage.updateCodeStatus(id, status);
       if (!updatedCode) {
         return res.status(404).json({ error: "Code not found" });
       }
 
       res.json(updatedCode);
     } catch (error: any) {
-      if (error.message && error.message.includes("Invalid status transition")) {
-        res.status(400).json({ error: error.message });
-      } else {
-        res.status(500).json({ error: "Failed to update code" });
-      }
+      console.error("Error updating code:", error);
+      res.status(500).json({ error: "Failed to update code" });
     }
   });
 
